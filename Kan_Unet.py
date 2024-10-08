@@ -467,53 +467,51 @@ class PVMLayer(nn.Module):
             bimamba_type="v2"
         )
 
-        # self.proj = nn.Linear(input_dim, output_dim)  # 线性投影  # 原来的代码
+        # self.proj = nn.Linear(input_dim, output_dim) 
         self.proj = nn.Linear(input_dim, output_dim)
 
         self.skip_scale = nn.Parameter(torch.ones(1))
-        # nn.Parameter是一个包装器，用于将一个Tensor转换为模型的一个参数
-        # skip_scale是一个初始形状为（1，）的张量，其中元素都为1。该参数通常用于缩放跳跃连接(skip connection)的输出
+       
 
     def forward(self, x):
         if x.dtype == torch.float16:
-            x = x.type(torch.float32)  # 如果输入张量x的数据类型是半精度浮点数(float16)，怎将其转换为单精度浮点数(float32)
+            x = x.type(torch.float32)  
         # print(x.shape)
         # exit()
-        # 获取输入张量的形状
+       
         B, C = x.shape[:2]
-        assert C == self.input_dim  # 确保输入的通道数C与该层定义的input_dim一致
-        n_tokens = x.shape[2:].numel()  # 除了B和C之外的所有维度的元素总数。这通常用于将张量展平
-        img_dims = x.shape[2:]  # 保存了原始图像的空间维度（高度和宽度）
-        # 展平和归一化输入
-        x_flat = x.reshape(B, C, n_tokens).transpose(-1, -2)  # 将输入张量x展平为[B, C, n_tokens]的形状，并交换最后两个维度
-        x_norm = self.norm(x_flat)  # 对展平后的张量进行层归一化
+        assert C == self.input_dim  
+        n_tokens = x.shape[2:].numel() 
+        img_dims = x.shape[2:]  
+        
+        x_flat = x.reshape(B, C, n_tokens).transpose(-1, -2)  
+        x_norm = self.norm(x_flat)  
 
-        # 将输入张量x_norm分割成四个大小相等的部分,每个部分都通过Mamba层处理，并添加了残差连接(即原始输入乘以self.skip_scale)
-        x1, x2, x3, x4 = torch.chunk(x_norm, 4, dim=2)  # 将输入张量x_norm分割成四个大小相等的部分
+       
+        x1, x2, x3, x4 = torch.chunk(x_norm, 4, dim=2) 
         x_mamba1 = self.mamba(x1) + self.skip_scale * x1
         x_mamba2 = self.mamba(x2) + self.skip_scale * x2
         x_mamba3 = self.mamba(x3) + self.skip_scale * x3
         x_mamba4 = self.mamba(x4) + self.skip_scale * x4
-        x_mamba = torch.cat([x_mamba1, x_mamba2, x_mamba3, x_mamba4], dim=2)  # 将处理后的四个部分拼接回一起
+        x_mamba = torch.cat([x_mamba1, x_mamba2, x_mamba3, x_mamba4], dim=2) 
 
-        x_mamba = self.norm(x_mamba)  # 拼接后的张量再次通过层归一化
-        # 处理张量使得它适合用KANLinear
+        x_mamba = self.norm(x_mamba)  
+        
         B1, N1, C1 = x_mamba.shape
         x_mamba = x_mamba.view(-1, C1)
         
-        x_mamba = self.proj(x_mamba)  # 通过线性投影层将张量从输入维度转换到输出维度
-        x_mamba = x_mamba.view(B1, N1, -1)  # 为了使用线性层加的
+        x_mamba = self.proj(x_mamba) 
+        x_mamba = x_mamba.view(B1, N1, -1)
        
 
         out = x_mamba.transpose(-1, -2).reshape(B, self.output_dim, *img_dims)
-        # 首先转置x_mamba的最后两个维度(为了确保在重塑之前，空间维度是连续的)，然后使用reshape和*img_dims将张量重塑回原始的[B, self.output_dim, H, W]形状
-        # *img_dims会将(H, W)解包为两个独立的位置参数传递给reshape函数
+        
         return out
 
 
-# 通道注意力桥，用于计算输入张量(t1, t2, t3, t4, t5)在通道维度上的注意力权重
+
 class Channel_Att_Bridge(nn.Module):
-    # 初始化函数__init__
+   
     def __init__(self, c_list, split_att='fc', mlp_ratio=4.):
         super().__init__()
         c_list_sum = sum(c_list) - c_list[-1]
@@ -624,11 +622,7 @@ class Kan_UNet(nn.Module):
         self.encoder1 = nn.Sequential(
             nn.Conv2d(input_channels, c_list[0], 3, stride=1, padding=1),
         )
-        #  ###########################################  修改之后的主编码器层  ########################################
-
-        # self.encoder1 = nn.Sequential(
-        #     PVMLayer(input_dim=input_channels, output_dim=c_list[0])
-        # )
+       
 
         self.encoder2 = nn.Sequential(
             PVMLayer(input_dim=c_list[0], output_dim=c_list[1])
